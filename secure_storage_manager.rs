@@ -17,6 +17,7 @@
 use crate::keybox;
 use crate::keymaster_attributes;
 use alloc::{format, string::String, vec::Vec};
+use keymaster_attributes::UdsCerts;
 use kmr_common::{
     crypto::{self, KeyMaterial},
     km_err, try_to_vec, vec_try, vec_try_with_capacity,
@@ -27,7 +28,7 @@ use kmr_common::{
 use kmr_ta::device::{
     RetrieveAttestationIds, RetrieveCertSigningInfo, SigningAlgorithm, SigningKeyType,
 };
-use log::info;
+use log::{error, info};
 use protobuf::{self, Message};
 use storage::{OpenMode, Port, SecureFile, Session};
 
@@ -42,10 +43,16 @@ const KM_ATTESTATION_ID_FILENAME: &str = "AttestationIds";
 /// `kAttestKeyCertPrefix` value in `secure_storage_manager.cpp` for back-compatibility.
 const KM_ATTESTATION_KEY_CERT_PREFIX: &str = "AttestKeyCert";
 
+/// Filename for holding UDS Certificate.
+const KM_RKP_UDS_CERT_FILENAME: &str = "UdsCerts";
+
 /// Maximum size of each attestation certificate
 const MAX_CERT_SIZE: usize = 2048;
 /// Maximum number of attestation certificates
 const MAX_CERT_CHAIN_LEN: usize = 3;
+
+/// Maximum number of UDS certificates
+const MAX_UDS_CERT_CHAIN_LEN: usize = 3;
 
 /// Return the filename for the file holding attestation keys and certificates for the specified
 /// signing algorithm.
@@ -158,6 +165,52 @@ pub(crate) fn provision_attestation_key_file(
     write_protobuf_to_attestation_key_file(algorithm, attestation_key)
 }
 
+/// Creates and empty UDS certificates file
+fn create_uds_cert_file() -> Result<OpenSecureFile, Error> {
+    OpenSecureFile::new(KM_RKP_UDS_CERT_FILENAME)
+}
+
+fn write_protobuf_to_uds_cert_file(uds_cert_pb: UdsCerts) -> Result<(), Error> {
+    let serialized_buffer = uds_cert_pb.write_to_bytes().map_err(|e| {
+        km_err!(SecureHwCommunicationFailed, "couldn't serialize UdsCerts: {:?}", e)
+    })?;
+
+    let mut file = create_uds_cert_file()?;
+    file.write_all(&serialized_buffer).map_err(|e| {
+        km_err!(SecureHwCommunicationFailed, "failed to provision UdsCerts file: {:?}", e)
+    })?;
+    Ok(())
+}
+
+/// Tries to read the file containing the UdsCerts and append a cert on it.
+/// If the file doesn't exist it will create it and save the provided key.
+pub(crate) fn append_uds_cert_chain(cert_data: &[u8]) -> Result<(), Error> {
+    if cert_data.is_empty() || cert_data.len() > MAX_CERT_SIZE {
+        return Err(km_err!(
+            InvalidArgument,
+            "Invalid certificate size: {}, max size {}",
+            cert_data.len(),
+            MAX_CERT_SIZE
+        ));
+    }
+
+    let mut uds_cert_pb = read_uds_cert_content()?;
+    let cert_chain_len = uds_cert_pb.get_certs().len();
+    if cert_chain_len >= MAX_UDS_CERT_CHAIN_LEN {
+        return Err(km_err!(
+            InvalidArgument,
+            "cannot accept more certificates, {} already provisioned",
+            cert_chain_len
+        ));
+    }
+
+    let mut cert = keymaster_attributes::AttestationCert::new();
+    cert.set_content(try_to_vec(cert_data)?);
+    uds_cert_pb.mut_certs().push(cert);
+
+    write_protobuf_to_uds_cert_file(uds_cert_pb)
+}
+
 /// Tries to read the file containing the attestation key and certificates and adds a certificate to
 /// it if there is still space left on the certificate section. If the file doesn't exist it will
 /// create it and save the provided certificate.
@@ -196,6 +249,31 @@ pub(crate) fn append_attestation_cert_chain(
     write_protobuf_to_attestation_key_file(algorithm, attestation_key_data)
 }
 
+/// Tries to read the file containing the UdsCert and delete the certificate section.
+pub(crate) fn clear_uds_cert_chain() -> Result<(), Error> {
+    let mut uds_cert_pb = read_uds_cert_content()?;
+    if uds_cert_pb.get_certs().is_empty() {
+        // No certs found, nothing to delete.
+        return Ok(());
+    }
+    uds_cert_pb.clear_certs();
+    write_protobuf_to_uds_cert_file(uds_cert_pb)?;
+    uds_cert_pb = read_uds_cert_content()?;
+    let cert_chain_len = uds_cert_pb.get_certs().len();
+    if cert_chain_len != 0 {
+        error!(
+            "Couldn't delete all certificates in {:?}, found {}",
+            KM_RKP_UDS_CERT_FILENAME, cert_chain_len
+        );
+        return Err(km_err!(
+            UnknownError,
+            "couldn't delete all certificates, found {}",
+            cert_chain_len
+        ));
+    }
+    Ok(())
+}
+
 /// Tries to read the file containing the attestation key delete only the certificate section.
 pub(crate) fn clear_attestation_cert_chain(algorithm: SigningAlgorithm) -> Result<(), Error> {
     let mut attestation_key_data = read_attestation_key_content(algorithm)?;
@@ -209,7 +287,7 @@ pub(crate) fn clear_attestation_cert_chain(algorithm: SigningAlgorithm) -> Resul
     let attestation_key_data = read_attestation_key_content(algorithm)?;
     let cert_chain_len = attestation_key_data.get_certs().len();
     if cert_chain_len != 0 {
-        log::error!("Couldn't delete all certificates, found {}", cert_chain_len);
+        error!("Couldn't delete all certificates, found {}", cert_chain_len);
         return Err(km_err!(
             UnknownError,
             "couldn't delete all certificates, found {}",
@@ -298,7 +376,10 @@ fn get_file_contents(file_name: &str) -> Result<Option<Vec<u8>>, Error> {
     // retrieving attestation IDs on unprovisioned devices.
     let file = match session.open_file(file_name, OpenMode::Open) {
         Ok(file) => file,
-        Err(storage::Error::Code(trusty_sys::Error::NotFound)) => return Ok(None),
+        Err(storage::Error::Code(trusty_sys::Error::NotFound)) => {
+            info!("{file_name:?} NotFound");
+            return Ok(None);
+        }
         Err(e) => {
             return Err(km_err!(
                 SecureHwCommunicationFailed,
@@ -368,6 +449,34 @@ fn read_attestation_key_content(
         None => keymaster_attributes::AttestationKey::new(),
     };
     Ok(pb)
+}
+
+/// Retrieve that Uds certificate information
+/// Returns an empty protobuf when file is not found to match c++ behavior
+fn read_uds_cert_content() -> Result<UdsCerts, Error> {
+    let uds_cert_file_pb = match get_file_contents(KM_RKP_UDS_CERT_FILENAME)? {
+        Some(content) => Message::parse_from_bytes(&content)
+            .map_err(|e| km_err!(UnknownError, "failed to parse UdsCerts proto: {:?}", e))?,
+        None => UdsCerts::new(),
+    };
+    Ok(uds_cert_file_pb)
+}
+
+/// Retrieve the UdsCerts from the file in secure storage.
+pub(crate) fn read_uds_cert() -> Result<Vec<keymint::Certificate>, Error> {
+    let mut uds_certs_pb: UdsCerts = read_uds_cert_content()?;
+
+    let certs = uds_certs_pb.take_certs();
+    let num_certs = certs.len();
+    if num_certs == 0 {
+        return Err(km_err!(UnknownError, "UdsCerts file found but it had nothing"));
+    }
+    let mut certificates = vec_try_with_capacity!(num_certs)?;
+    for mut cert in certs {
+        let km_cert_pb = keymint::Certificate { encoded_certificate: cert.take_content() };
+        certificates.push(km_cert_pb);
+    }
+    Ok(certificates)
 }
 
 /// Tries to parse an EC private key as a SEC1 private EC key. If that fails, it tries to parse it

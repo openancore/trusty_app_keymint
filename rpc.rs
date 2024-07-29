@@ -16,6 +16,7 @@
 //! Trusty implementation of `RetrieveRpcArtifacts`. Currently, this supports
 //! only IRPC V3.
 
+use crate::secure_storage_manager;
 use hwbcc::{get_bcc, sign_data, HwBccMode, SigningAlgorithm, HWBCC_MAX_RESP_PAYLOAD_LENGTH};
 use hwkey::{Hwkey, KdfVersion};
 use kmr_common::{crypto, rpc_err, vec_try, Error};
@@ -28,6 +29,10 @@ use kmr_wire::{cbor::value::Value, rpc};
 // This matches the value of kMasterKeyDerivationData in
 // trusty/user/app/keymaster/trusty_remote_provisioning_context.cpp
 const HBK_KEY_DERIVATION_DATA: &[u8] = b"RemoteKeyProvisioningMasterKey";
+
+// SignerName is a string identifier that indicates both the signing authority
+// as well as the format of the UdsCertChain
+const SIGNER_NAME: &str = "AndroidRkpSecp384r1";
 
 pub struct TrustyRpc;
 
@@ -55,8 +60,23 @@ impl RetrieveRpcArtifacts for TrustyRpc {
         // Note: Test mode is ignored as this currently supports only IRPC V3.
         let bcc = get_bcc(HwBccMode::Release, &mut bcc_buf)
             .map_err(|e| rpc_err!(Failed, "failed to get DICE Info: {:?}", e))?;
-        // Construct `UdsCerts` as an empty CBOR map
-        let uds_certs_data = serialize_cbor(&Value::Map(Vec::new()))?;
+        // Construct `UdsCerts` as an empty CBOR map if not exist
+        let uds_certs_data = match secure_storage_manager::read_uds_cert() {
+            Ok(uds_certs) => {
+                let encoded_certs = uds_certs
+                    .into_iter()
+                    .map(|cert| Value::Bytes(cert.encoded_certificate))
+                    .collect::<Vec<_>>();
+                serialize_cbor(&Value::Map(vec![(
+                    Value::Text(SIGNER_NAME.to_string()),
+                    Value::Array(encoded_certs),
+                )]))
+            }
+            Err(err) => {
+                log::warn!("Failed to read UDS certificates: {:?}", err);
+                serialize_cbor(&Value::Map(Vec::new()))
+            }
+        }?;
         let pub_dice_artifacts =
             PubDiceArtifacts { uds_certs: uds_certs_data, dice_cert_chain: bcc.to_vec() };
         let dice_info = DiceInfo {

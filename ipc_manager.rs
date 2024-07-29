@@ -23,7 +23,8 @@ use keymint_access_policy::{
 use kmr_common::{
     crypto, km_err,
     wire::legacy::{
-        self, AppendAttestationCertChainResponse, ClearAttestationCertChainResponse,
+        self, AppendAttestationCertChainResponse, AppendUdsCertificateResponse,
+        ClearAttestationCertChainResponse, ClearUdsCertificateResponse,
         ConfigureBootPatchlevelResponse, GetAuthTokenKeyResponse, GetDeviceInfoResponse,
         GetVersion2Response, GetVersionResponse, SetAttestationIdsKM3Response,
         SetAttestationIdsResponse, SetAttestationKeyResponse, SetBootParamsResponse,
@@ -383,6 +384,14 @@ impl KMLegacyService {
                     Some(&req.second_imei),
                 )?;
                 Ok(TrustyPerformOpRsp::SetAttestationIdsKM3(SetAttestationIdsKM3Response {}))
+            }
+            TrustyPerformOpReq::AppendUdsCertificate(req) => {
+                secure_storage_manager::append_uds_cert_chain(&req.cert_data)?;
+                Ok(TrustyPerformOpRsp::AppendUdsCertificate(AppendUdsCertificateResponse {}))
+            }
+            TrustyPerformOpReq::ClearUdsCertificate(..) => {
+                secure_storage_manager::clear_uds_cert_chain()?;
+                Ok(TrustyPerformOpRsp::ClearUdsCertificate(ClearUdsCertificateResponse {}))
             }
         }
     }
