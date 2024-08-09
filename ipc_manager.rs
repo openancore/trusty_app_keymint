@@ -18,7 +18,7 @@ use crate::secure_storage_manager;
 use alloc::{rc::Rc, vec::Vec};
 use core::{cell::RefCell, mem};
 use keymint_access_policy::{
-    keymint_check_secure_target_access_policy_provisioning, keymint_check_target_access_policy,
+    keymint_check_secure_target_access_policy_provisioning, KEYMINT_ACCESSIBLE_UUIDS,
 };
 use kmr_common::{
     crypto, km_err,
@@ -505,10 +505,6 @@ impl Service for KMSecureService {
         _handle: &Handle,
         peer: &Uuid,
     ) -> tipc::Result<ConnectResult<Self::Connection>> {
-        if !keymint_check_target_access_policy(peer) {
-            error!("access policy rejected the uuid: {:?}", peer);
-            return Ok(ConnectResult::CloseConnection);
-        }
         debug!("Accepted connection from uuid {:?}.", peer);
         Ok(ConnectResult::Accept(Context { uuid: peer.clone() }))
     }
@@ -603,7 +599,8 @@ pub fn handle_port_connections(
                 e
             )
         })?
-        .allow_ta_connect();
+        .allow_ta_connect()
+        .allowed_uuids(&KEYMINT_ACCESSIBLE_UUIDS);
     dispatcher.add_service(Rc::new(sec_service), cfg).map_err(|e| {
         km_err!(UnknownError, "could not add secure service to dispatcher: {:?}", e)
     })?;

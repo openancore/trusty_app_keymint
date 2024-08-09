@@ -18,7 +18,7 @@
 
 use tipc::Uuid;
 
-const ACCESSIBLE_UUIDS: [Uuid; 4] = [
+pub const KEYMINT_ACCESSIBLE_UUIDS: [Uuid; 4] = [
     /* gatekeeper uuid */
     Uuid::new(0x38ba0cdc, 0xdf0e, 0x11e4, [0x98, 0x69, 0x23, 0x3f, 0xb6, 0xae, 0x47, 0x95]),
     /* confirmation UI uuid */
@@ -28,13 +28,6 @@ const ACCESSIBLE_UUIDS: [Uuid; 4] = [
     /* keymint unit test uuid */
     Uuid::new(0xd322eec9, 0x6d03, 0x49fa, [0x82, 0x1c, 0x1c, 0xcd, 0x27, 0x05, 0x71, 0x9c]),
 ];
-
-pub fn keymint_check_target_access_policy(uuid: &Uuid) -> bool {
-    if ACCESSIBLE_UUIDS.contains(uuid) {
-        return true;
-    }
-    return false;
-}
 
 pub fn keymint_check_secure_target_access_policy_provisioning(_uuid: &Uuid) -> bool {
     /* Not Supported */
