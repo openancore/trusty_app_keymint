@@ -170,6 +170,22 @@ fn create_uds_cert_file() -> Result<OpenSecureFile, Error> {
     OpenSecureFile::new(KM_RKP_UDS_CERT_FILENAME)
 }
 
+/// Delete the existing UDS certificates file
+fn delete_uds_cert_file() -> Result<(), Error> {
+    let mut session = Session::new(Port::TamperProof, true).map_err(|e| {
+        km_err!(SecureHwCommunicationFailed, "failed to connect to storage port: {:?}", e)
+    })?;
+    session.remove(KM_RKP_UDS_CERT_FILENAME).map_err(|e| {
+        km_err!(
+            SecureHwCommunicationFailed,
+            "failed to delete {:?}: {:?}",
+            KM_RKP_UDS_CERT_FILENAME,
+            e
+        )
+    })?;
+    Ok(())
+}
+
 fn write_protobuf_to_uds_cert_file(uds_cert_pb: UdsCerts) -> Result<(), Error> {
     let serialized_buffer = uds_cert_pb.write_to_bytes().map_err(|e| {
         km_err!(SecureHwCommunicationFailed, "couldn't serialize UdsCerts: {:?}", e)
@@ -249,22 +265,18 @@ pub(crate) fn append_attestation_cert_chain(
     write_protobuf_to_attestation_key_file(algorithm, attestation_key_data)
 }
 
-/// Tries to read the file containing the UdsCert and delete the certificate section.
-pub(crate) fn clear_uds_cert_chain() -> Result<(), Error> {
+/// Tries to read the file containing the UdsCert. It's fine if that file is clear, or will try to
+/// delete it. After this call, all "read" operation will get a default <UdsCerts> object.
+pub(crate) fn maybe_delete_uds_cert_chain() -> Result<(), Error> {
     let mut uds_cert_pb = read_uds_cert_content()?;
     if uds_cert_pb.get_certs().is_empty() {
         // No certs found, nothing to delete.
         return Ok(());
     }
-    uds_cert_pb.clear_certs();
-    write_protobuf_to_uds_cert_file(uds_cert_pb)?;
+    delete_uds_cert_file()?;
     uds_cert_pb = read_uds_cert_content()?;
     let cert_chain_len = uds_cert_pb.get_certs().len();
     if cert_chain_len != 0 {
-        error!(
-            "Couldn't delete all certificates in {:?}, found {}",
-            KM_RKP_UDS_CERT_FILENAME, cert_chain_len
-        );
         return Err(km_err!(
             UnknownError,
             "couldn't delete all certificates, found {}",
@@ -619,6 +631,12 @@ mod tests {
         session.open_file(&file_name, OpenMode::Open).is_ok()
     }
 
+    fn check_uds_certs_file_exists() -> bool {
+        let mut session =
+            Session::new(Port::TamperProof, true).expect("Couldn't connect to storage");
+        session.open_file(KM_RKP_UDS_CERT_FILENAME, OpenMode::Open).is_ok()
+    }
+
     fn delete_attestation_id_file() {
         let mut session =
             Session::new(Port::TamperProof, true).expect("Couldn't connect to storage");
@@ -936,6 +954,66 @@ mod tests {
     fn clear_certificate_chain_works() {
         clear_certificate_chain_works_impl(SigningAlgorithm::Ec);
         clear_certificate_chain_works_impl(SigningAlgorithm::Rsa);
+    }
+
+    // This test should be run manually as it writes to storage.
+    // #[test]
+    fn provision_uds_certs_works() {
+        if check_uds_certs_file_exists() {
+            delete_uds_cert_file().expect("Couldn't delete UdsCerts file");
+        }
+        let cert1 = [b'a'; 500].as_slice();
+        let cert2 = [b'b'; 500].as_slice();
+        let cert3 = [b'c'; 500].as_slice();
+        let certs = [cert1, cert2, cert3];
+        for cert_data in certs.iter() {
+            append_uds_cert_chain(cert_data).expect("Couldn't provision UdsCerts");
+        }
+        expect!(
+            append_uds_cert_chain(cert3).is_err(),
+            "Shouldn't be able to add more certificates"
+        );
+
+        let read_uds_certs = read_uds_cert().expect("Couldn't read attestation key");
+        for i in 0..certs.len() {
+            expect_eq!(certs[i], read_uds_certs[i].encoded_certificate, "Uds Certs didn't match");
+        }
+
+        delete_uds_cert_file().expect("Couldn't delete UdsCerts file");
+    }
+
+    // This test should be run manually as it writes to storage.
+    // #[test]
+    fn clear_uds_certs_works() {
+        if check_uds_certs_file_exists() {
+            delete_uds_cert_file().expect("Couldn't delete UdsCerts file");
+        }
+        let cert = [b'a'; 500].as_slice();
+        append_uds_cert_chain(cert).expect("Couldn't provision certificate");
+        let read_certs = read_uds_cert().expect("Couldn't get UdsCerts from storage");
+        expect_eq!(read_certs.len(), 1, "Didn't get all certificates back");
+
+        maybe_delete_uds_cert_chain().expect("Couldn't delete UdsCerts file");
+
+        expect!(read_uds_cert().is_err(), "Certificates were not deleted");
+    }
+
+    // This test should be run manually as it writes to storage.
+    // #[test]
+    fn get_clear_uds_certs_after_delete_works() {
+        if check_uds_certs_file_exists() {
+            delete_uds_cert_file().expect("Couldn't delete UdsCerts file");
+        }
+        let cert = [b'a'; 500].as_slice();
+        append_uds_cert_chain(cert).expect("Couldn't provision certificate");
+        let read_certs = read_uds_cert().expect("Couldn't get UdsCerts from storage");
+        expect_eq!(read_certs.len(), 1, "Didn't get all certificates back");
+
+        maybe_delete_uds_cert_chain().expect("couldn't delete UdsCerts file");
+
+        let expected_clear_uds_cert =
+            read_uds_cert_content().expect("Couldn't get a default UdsCerts objec");
+        expect_eq!(expected_clear_uds_cert.certs.len(), 0, "Not a clear UdsCerts object");
     }
 
     // This test should be run manually as it writes to storage.
