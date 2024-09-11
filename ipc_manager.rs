@@ -390,7 +390,7 @@ impl KMLegacyService {
                 Ok(TrustyPerformOpRsp::AppendUdsCertificate(AppendUdsCertificateResponse {}))
             }
             TrustyPerformOpReq::ClearUdsCertificate(..) => {
-                secure_storage_manager::clear_uds_cert_chain()?;
+                secure_storage_manager::maybe_delete_uds_cert_chain()?;
                 Ok(TrustyPerformOpRsp::ClearUdsCertificate(ClearUdsCertificateResponse {}))
             }
         }
