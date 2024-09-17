@@ -26,7 +26,7 @@ use kmr_common::{
         self, AppendAttestationCertChainResponse, AppendUdsCertificateResponse,
         ClearAttestationCertChainResponse, ClearUdsCertificateResponse,
         ConfigureBootPatchlevelResponse, GetAuthTokenKeyResponse, GetDeviceInfoResponse,
-        GetVersion2Response, GetVersionResponse, SetAttestationIdsKM3Response,
+        GetUdsCertsResponse, GetVersion2Response, GetVersionResponse, SetAttestationIdsKM3Response,
         SetAttestationIdsResponse, SetAttestationKeyResponse, SetBootParamsResponse,
         SetWrappedAttestationKeyResponse, TrustyMessageId, TrustyPerformOpReq, TrustyPerformOpRsp,
         TrustyPerformSecureOpReq, TrustyPerformSecureOpRsp,
@@ -475,6 +475,11 @@ impl KMSecureService {
             TrustyPerformSecureOpReq::GetDeviceInfo(_) => {
                 Ok(TrustyPerformSecureOpRsp::GetDeviceInfo(GetDeviceInfoResponse {
                     device_ids: self.km_ta.borrow().rpc_device_info()?,
+                }))
+            }
+            TrustyPerformSecureOpReq::GetUdsCerts(_) => {
+                Ok(TrustyPerformSecureOpRsp::GetUdsCerts(GetUdsCertsResponse {
+                    uds_certs: self.km_ta.borrow().uds_certs()?,
                 }))
             }
             TrustyPerformSecureOpReq::SetAttestationIds(req) => {
