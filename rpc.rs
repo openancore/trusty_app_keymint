@@ -32,7 +32,7 @@ const HBK_KEY_DERIVATION_DATA: &[u8] = b"RemoteKeyProvisioningMasterKey";
 
 // SignerName is a string identifier that indicates both the signing authority
 // as well as the format of the UdsCertChain
-const SIGNER_NAME: &str = "AndroidRkpSecp384r1";
+const SIGNER_NAME: &str = "GSMIRkpSecp384r1";
 
 pub struct TrustyRpc;
 
