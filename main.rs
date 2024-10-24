@@ -17,8 +17,8 @@
 //! Main entrypoint for KeyMint/Rust trusted application (TA) on Trusty.
 
 use keymint::{
-    AttestationIds, CertSignInfo, SharedSddManager, TrustyKeys, TrustyMonotonicClock, TrustyRng,
-    TrustyRpc, TrustySecureDeletionSecretManager,
+    CertSignInfo, SharedSddManager, TrustyKeys, TrustyMonotonicClock, TrustyRng, TrustyRpc,
+    TrustySecureDeletionSecretManager,
 };
 
 #[cfg(feature = "with_hwwsk_support")]
@@ -93,7 +93,10 @@ fn main() {
     let dev = kmr_ta::device::Implementation {
         keys: Box::new(TrustyKeys),
         sign_info: Some(Box::new(CertSignInfo)),
-        attest_ids: Some(Box::new(AttestationIds)),
+        #[cfg(feature = "vm_nonsecure")]
+        attest_ids: None,
+        #[cfg(not(feature = "vm_nonsecure"))]
+        attest_ids: Some(Box::new(keymint::AttestationIds)),
         sdd_mgr: Some(Box::new(shared_sdd_mgr)),
         bootloader: Box::new(kmr_ta::device::BootloaderDone),
         #[cfg(feature = "with_hwwsk_support")]
