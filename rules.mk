@@ -33,12 +33,21 @@ MODULE_LIBRARY_DEPS += \
 	trusty/user/base/lib/keymint-rust/common \
 	trusty/user/base/lib/keymint-rust/ta \
 	$(call FIND_CRATE,log) \
-	$(call FIND_CRATE,protobuf)/2.27.1 \
 	trusty/user/base/lib/storage/rust \
 	trusty/user/base/lib/tipc/rust \
 	trusty/user/base/lib/system_state/rust \
 	trusty/user/base/lib/trusty-log \
 	trusty/user/base/lib/trusty-std \
+
+# Special case discovery of the path to the right protobuf crate
+# since the way older versions are located changed with the switch
+# to the rust crate monorepo. This can be simplified to just use
+# `FIND_CRATE` once all Trusty manifests use the monorepo.
+ifneq ($(wildcard external/rust/crates/protobuf/2.27.1/rules.mk),)
+MODULE_LIBRARY_DEPS += external/rust/crates/protobuf/2.27.1
+else
+MODULE_LIBRARY_DEPS += $(call FIND_CRATE,protobuf)
+endif
 
 ifdef TRUSTY_KM_RUST_ACCESS_POLICY
     MODULE_LIBRARY_DEPS+= $(TRUSTY_KM_RUST_ACCESS_POLICY)
